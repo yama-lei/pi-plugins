@@ -1,0 +1,15 @@
+{
+  "plugins": [
+    "npm:@benvargas/pi-synthetic-provider",
+    "npm:@benvargas/pi-exa-mcp",
+    "npm:@benvargas/pi-firecrawl",
+    "npm:@benvargas/pi-themes",
+    "npm:@benvargas/pi-ancestor-discovery",
+    "npm:@benvargas/pi-cut-stack",
+    "npm:@benvargas/pi-openai-fast",
+    "npm:@benvargas/pi-openai-verbosity",
+    "npm:@benvargas/pi-claude-code-use",
+    "npm:@benvargas/pi-model-sort"
+  ],
+  "skills": []
+}

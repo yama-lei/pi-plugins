@@ -1,0 +1,48 @@
+{
+  "plugins": [
+    "npm:@howaboua/pi-ask",
+    "npm:@howaboua/pi-auto-trees",
+    "npm:@howaboua/pi-better-skills-tool",
+    "npm:@howaboua/pi-cache-hit-predictor",
+    "npm:@howaboua/pi-gippity-control",
+    "npm:@howaboua/pi-github-watch",
+    "npm:@howaboua/pi-grok-realtime",
+    "npm:@howaboua/pi-gpt-switcher",
+    "npm:@howaboua/pi-pet",
+    "npm:@howaboua/pi-shepherdr",
+    "npm:@howaboua/pi-smart-btw",
+    "npm:@howaboua/pi-subagent-review",
+    "npm:@howaboua/pi-unicode-charts"
+  ],
+  "skills": [
+    {
+      "source": "https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-skill-chrome-cdp",
+      "skills": ["chrome-cdp"]
+    },
+    {
+      "source": "https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-skill-code",
+      "skills": [
+        "codebase-hygiene",
+        "code-review",
+        "project-reference-research",
+        "repository-delivery",
+        "scratchpad"
+      ]
+    },
+    {
+      "source": "https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-skill-foundations",
+      "skills": ["agents-md", "communication", "skill-creator"]
+    },
+    {
+      "source": "https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-skill-harness-and-agent-engineering",
+      "skills": [
+        "agent-session-diagnostics",
+        "agent-tool-design",
+        "extension-design",
+        "harness-checklist",
+        "instruction-calibration",
+        "prompt-caching"
+      ]
+    }
+  ]
+}

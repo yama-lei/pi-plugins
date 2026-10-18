@@ -1,0 +1,33 @@
+{
+  "plugins": [
+    "npm:@narumitw/pi-accounts",
+    "npm:@narumitw/pi-analytics",
+    "npm:@narumitw/pi-btw",
+    "npm:@narumitw/pi-cache-hit-monitor",
+    "npm:@narumitw/pi-caffeinate",
+    "npm:@narumitw/pi-chat",
+    "npm:@narumitw/pi-codex-compact",
+    "npm:@narumitw/pi-dotenv",
+    "npm:@narumitw/pi-file-context",
+    "npm:@narumitw/pi-fleet",
+    "npm:@narumitw/pi-github-pr",
+    "npm:@narumitw/pi-goal",
+    "npm:@narumitw/pi-herdr",
+    "npm:@narumitw/pi-langfuse",
+    "npm:@narumitw/pi-lsp",
+    "npm:@narumitw/pi-notes",
+    "npm:@narumitw/pi-plan-mode",
+    "npm:@narumitw/pi-progress",
+    "npm:@narumitw/pi-recall",
+    "npm:@narumitw/pi-stamp",
+    "npm:@narumitw/pi-starship",
+    "npm:@narumitw/pi-sync",
+    "npm:@narumitw/pi-ticker",
+    "npm:@narumitw/pi-tool",
+    "npm:@narumitw/pi-typesafe",
+    "npm:@narumitw/pi-typesafe-search",
+    "npm:@narumitw/pi-usage",
+    "npm:@narumitw/pi-worktree"
+  ],
+  "skills": []
+}

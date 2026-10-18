@@ -1,0 +1,15 @@
+node_modules/
+*.tgz
+.env
+.env.*
+!.env.example
+.pi/npm/
+.pi/git/
+.agents/skills/
+
+# Local release tooling
+/Makefile
+/.Makefile.sw*
+/scripts/release.mjs
+/docs/publishing.md
+

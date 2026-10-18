@@ -1,0 +1,14 @@
+{
+  "plugins": [
+    "npm:@gotgenes/pi-permission-system",
+    "npm:@gotgenes/pi-permission-model-judge",
+    "npm:@gotgenes/pi-subagents",
+    "npm:@gotgenes/pi-subagents-worktrees",
+    "npm:@gotgenes/pi-github-tools",
+    "npm:@gotgenes/pi-autoformat",
+    "npm:@gotgenes/pi-colgrep",
+    "npm:@gotgenes/pi-session-tools",
+    "npm:@gotgenes/pi-nocd"
+  ],
+  "skills": []
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@yama-lei/pi-profile",
+  "version": "0.1.0",
+  "description": "Project-local Pi profiles with reusable JSON templates and LLM-assisted setup",
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "license": "UNLICENSED",
+  "keywords": ["pi-package", "pi", "profiles", "skills"],
+  "files": ["*.mjs", "index.ts", "profiles", "README.md"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check profile.mjs && node --check commands.mjs && node --check setup.mjs",
+    "prepublishOnly": "npm run check && npm test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
