@@ -20,6 +20,7 @@ const jiti = createJiti(import.meta.url, {
     "@earendil-works/pi-ai": join(host, "node_modules/@earendil-works/pi-ai/dist/compat.js"),
     "@earendil-works/pi-coding-agent": join(host, "dist/index.js"),
     "@earendil-works/pi-tui": join(host, "node_modules/@earendil-works/pi-tui/dist/index.js"),
+    typebox: join(host, "node_modules/typebox/build/index.mjs"),
   },
 });
 await jiti.import("./extension.test.ts");

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createModels, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { initTheme, OAuthSelectorComponent } from "@earendil-works/pi-coding-agent";
@@ -7,6 +10,7 @@ import { CATALOG_URL, matchModels, normalizeEndpoint, normalizeProviderName, par
 import { customProvider } from "../provider.ts";
 import extension from "../index.ts";
 import { select } from "../picker.ts";
+import { loadWebConfig, orderChannels, registerWebTools } from "../web.ts";
 import { getKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 
 const known = {
@@ -166,7 +170,7 @@ test("extension registers menus; Provider → Models preserves unknown-last orde
   const commands = new Map();
   const events = new Map();
   let selected;
-  extension({ registerProvider() {}, on: (name, handler) => events.set(name, handler),
+  extension({ registerProvider() {}, registerTool() {}, on: (name, handler) => events.set(name, handler),
     registerCommand: (name, command) => commands.set(name, command),
     setModel: async model => { selected = model; return true; } } as any);
   assert(events.has("session_start"));
@@ -197,7 +201,7 @@ test("extension registers menus; Provider → Models preserves unknown-last orde
 test("real custom editor routes model selection but preserves every native login command", async () => {
   const commands = new Map();
   const events = new Map();
-  extension({ registerProvider() {}, on: (name, handler) => events.set(name, handler),
+  extension({ registerProvider() {}, registerTool() {}, on: (name, handler) => events.set(name, handler),
     registerCommand: (name, command) => commands.set(name, command) } as any);
   let editor;
   const tui = { requestRender() {}, terminal: { rows: 24, columns: 80 } };
@@ -250,6 +254,93 @@ test("search picker is bounded, supports filtering and IME focus, and fits narro
   component.handleInput("model-99");
   component.handleInput("\r");
   assert.equal(await promise, "model-99");
+});
+
+test("search picker fuzzy-matches partial model ids", async () => {
+  let component;
+  const ctx = { mode: "tui", ui: { custom: factory => new Promise(resolve => {
+    component = factory({ terminal: { rows: 24 }, requestRender() {} },
+      { fg: (_color, text) => text }, getKeybindings(), resolve);
+  }) } };
+  const promise = select(ctx as any, "选择模型", ["claude-sonnet-4", "gpt-4o", "gpt-5.6-sol"]);
+  component.handleInput("5.6");
+  component.handleInput("\r");
+  assert.equal(await promise, "gpt-5.6-sol");
+  const second = select(ctx as any, "选择模型", ["claude-sonnet-4", "gpt-4o", "gpt-5.6-sol"]);
+  component.handleInput("gptsol");
+  component.handleInput("\r");
+  assert.equal(await second, "gpt-5.6-sol");
+});
+
+test("web tools: only active when a channel exists; fall back across channels; custom relay is probed", async () => {
+  const tools = new Map(); const events = new Map(); const commands = new Map();
+  let active = ["read", "web_search", "web_fetch"];
+  const calls: string[] = [];
+  const fakeFetch = (async (url, init) => {
+    calls.push(String(url));
+    if (String(url).includes("deepseek")) return new Response("{}", { status: 500 });
+    if (String(url).includes("chatgpt.com")) {
+      assert.equal(JSON.parse(init.body).commands.search_query[0].q, "rust");
+      return Response.json({ output: "Answer cite\ue202r1\ue201", results: [{ ref_id: "r1", url: "https://a.example", title: "A" }] });
+    }
+    return new Response("{}", { status: 404 });
+  }) as typeof fetch;
+  const pi = { registerTool: tool => tools.set(tool.name, tool), on: (n, h) => events.set(n, h),
+    registerCommand: (n, c) => commands.set(n, c), getActiveTools: () => active, setActiveTools: names => { active = names; } };
+  registerWebTools(pi as any, fakeFetch, () => loadWebConfig(mkdtempSync(join(tmpdir(), "pba-"))));
+  const registry = (keys: Record<string, string>, custom?: any) => ({
+    getApiKeyForProvider: async id => keys[id], getProviderAuth: async () => custom });
+  const ctx = (keys, custom?) => ({ modelRegistry: registry(keys, custom), ui: { notify() {} } });
+
+  await events.get("session_start")({}, ctx({}));
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(active, ["read"]);
+
+  const both = ctx({ deepseek: "k1", "openai-codex": "t.e30.s" });
+  await events.get("session_start")({}, both);
+  await new Promise(r => setTimeout(r, 10));
+  assert.deepEqual(active, ["read", "web_search", "web_fetch"]);
+  const result = await tools.get("web_search").execute("id", { query: "rust" }, undefined, undefined, both);
+  assert.equal(result.details.channel, "openai-codex");
+  assert(result.content[0].text.includes("Answer [1]") && result.content[0].text.includes("https://a.example"));
+  await assert.rejects(tools.get("web_fetch").execute("id", { url: "file:///etc/passwd" }, undefined, undefined, both));
+
+  const relay = ctx({}, { auth: { apiKey: "k", baseUrl: "https://relay.example/v1" } });
+  await events.get("session_start")({}, relay);
+  await new Promise(r => setTimeout(r, 10));
+  assert.deepEqual(active, ["read"]);
+  assert(calls.includes("https://relay.example/v1/tools/search"));
+});
+
+test("web channel order: own provider first, then codex > deepseek > custom; config can reorder/disable", () => {
+  const ch = ["deepseek", "custom", "openai-codex"].map(id => ({ id, label: id })) as any;
+  const ids = (list) => list.map(c => c.id);
+  const defaults = loadWebConfig(mkdtempSync(join(tmpdir(), "pba-")));
+  assert.deepEqual(ids(orderChannels([...ch], undefined, defaults)), ["openai-codex", "deepseek", "custom"]);
+  assert.deepEqual(ids(orderChannels([...ch], "deepseek", defaults)), ["deepseek", "openai-codex", "custom"]);
+  assert.deepEqual(ids(orderChannels([...ch], "self-define", defaults)), ["custom", "openai-codex", "deepseek"]);
+  const dir = mkdtempSync(join(tmpdir(), "pba-"));
+  writeFileSync(join(dir, "pi-better-ai.json"), JSON.stringify({ web: { order: ["deepseek"], disabled: ["custom", "bogus"], preferCurrentProvider: false } }));
+  const config = loadWebConfig(dir);
+  assert.deepEqual(ids(orderChannels([...ch], "openai-codex", config)), ["deepseek", "openai-codex"]);
+  writeFileSync(join(dir, "pi-better-ai.json"), "{not json");
+  assert.deepEqual(loadWebConfig(dir), defaults);
+});
+
+test("web_fetch uses DeepSeek's /v1/tools/fetch", async () => {
+  const tools = new Map();
+  let body;
+  const fakeFetch = (async (url, init) => {
+    assert.equal(String(url), "https://api.deepseek.com/v1/tools/fetch");
+    body = JSON.parse(init.body);
+    return Response.json({ title: "T", content: "hello" });
+  }) as typeof fetch;
+  registerWebTools({ registerTool: tool => tools.set(tool.name, tool), on() {}, registerCommand() {} } as any, fakeFetch,
+    () => loadWebConfig(mkdtempSync(join(tmpdir(), "pba-"))));
+  const ctx = { modelRegistry: { getApiKeyForProvider: async id => id === "deepseek" ? "k" : undefined, getProviderAuth: async () => undefined } };
+  const result = await tools.get("web_fetch").execute("id", { url: "https://example.com/a" }, undefined, undefined, ctx);
+  assert.deepEqual(body, { url: "https://example.com/a" });
+  assert.equal(result.content[0].text, "# T\n\nhello");
 });
 
 test("provider delegates real SSE response handling to pi-ai OpenAI completions", async () => {

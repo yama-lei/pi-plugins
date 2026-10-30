@@ -2,9 +2,11 @@ import { CustomEditor, type ExtensionAPI, type ExtensionCommandContext } from "@
 import { DEFAULT_PROVIDER_NAME, PROVIDER_ID, routeSubmission, UNMATCHED_SUFFIX } from "./catalog.ts";
 import { customProvider } from "./provider.ts";
 import { select } from "./picker.ts";
+import { registerWebTools } from "./web.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.registerProvider(customProvider());
+  registerWebTools(pi);
 
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
