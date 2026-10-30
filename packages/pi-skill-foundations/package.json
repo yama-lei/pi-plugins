@@ -1,0 +1,27 @@
+{
+	"name": "@yama-lei/pi-skill-foundations",
+	"version": "0.1.0",
+	"description": "Portable Pi foundation skills",
+	"type": "module",
+	"keywords": [
+		"pi-package",
+		"pi",
+		"pi-skill",
+		"skill",
+		"foundations"
+	],
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"skills",
+		"README.md",
+		"LICENSE"
+	],
+	"pi": {
+		"skills": [
+			"./skills"
+		]
+	}
+}
