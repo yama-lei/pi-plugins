@@ -1,11 +1,11 @@
 {
-  "name": "my-pi-extensions",
+  "name": "pi-packages",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22.19.0" },
   "workspaces": ["packages/*"],
   "scripts": {
-    "check": "npm run check --workspace @yama-lei/pi-profile",
-    "test": "npm test --workspaces"
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm test --workspaces --if-present"
   }
 }

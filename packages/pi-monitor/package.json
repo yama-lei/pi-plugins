@@ -1,0 +1,22 @@
+{
+  "name": "@yama-lei/pi-monitor",
+  "version": "0.1.0",
+  "description": "Continuous command and WebSocket monitoring with batched conversation notifications for Pi",
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "license": "UNLICENSED",
+  "keywords": ["pi-package", "pi", "monitor", "logs", "websocket"],
+  "files": ["index.ts", "browser.ts", "monitor.mjs", "README.md"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "check": "node --check monitor.mjs",
+    "test": "node --test tests/*.test.mjs && node tests/run.mjs",
+    "test:live": "node tests/live.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": { "extensions": ["./index.ts"] }
+}

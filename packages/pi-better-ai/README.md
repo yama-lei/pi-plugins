@@ -9,7 +9,7 @@
 ```bash
 pi install npm:@yama-lei/pi-better-ai
 # 本地开发
-pi install /absolute/path/to/my-pi-extensions/packages/pi-better-ai
+pi install /absolute/path/to/pi-packages/packages/pi-better-ai
 ```
 
 ## Web 搜索 / 抓取
