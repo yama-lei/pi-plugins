@@ -8,8 +8,8 @@ node_modules/
 .agents/skills/
 
 # Local release tooling
-/Makefile
+#/Makefile
 /.Makefile.sw*
-/scripts/release.mjs
+#/scripts/release.mjs
 /docs/publishing.md
 
