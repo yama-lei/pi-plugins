@@ -85,7 +85,11 @@ async function rpc(type, data = {}) {
   return response.data;
 }
 function notifications() {
-  return records.filter(e => e.type === "message_end" && e.message?.customType === "monitor").map(e => e.message.details);
+  return records.flatMap(e => {
+    const message = e.type === "message_end" ? e.message : e.type === "entry_appended" && e.entry?.type === "custom_message" ? e.entry : undefined;
+    if (message?.customType !== "monitor") return [];
+    return message.details.kind === "digest" ? message.details.notifications : [message.details];
+  });
 }
 function toolResults(name) {
   return records.filter(e => e.type === "tool_execution_end" && e.toolName === name);
@@ -96,27 +100,28 @@ try {
   assert.equal(state.model.id, "gpt-6-luna");
   assert.equal(state.model.provider, "openai-codex");
   console.log(`Real Pi model: ${state.model.provider}/${state.model.id}`);
-  await rpc("set_follow_up_mode", { mode: "all" });
+  await rpc("set_follow_up_mode", { mode: "one-at-a-time" });
   const wsUrl = `ws://127.0.0.1:${server.address().port}`;
-  await rpc("prompt", { message: `Integration test. Use the Monitor tool, not shell polling. Start exactly these six independent monitors now. Use timeout_ms=60000 and persistent=false except where specified. Descriptions must match exactly.
+  await rpc("prompt", { message: `Integration test. Use the Monitor tool, not shell polling. Start exactly these seven independent monitors now. Use notify="events", timeout_ms=60000 and persistent=false except where specified. Descriptions must match exactly.
 1. description="demo", command="for i in 1 2 3; do sleep 2; printf 'tick %s\\n' \\"$i\\"; done; printf 'done\\n'". Write the shell quoting correctly so $i expands.
 2. description="failure", command="printf 'visible\\n'; printf 'stderr-only\\n' >&2; exit 7".
 3. description="timeout", command="sleep 30", timeout_ms=1000.
 4. description="websocket", ws={"url":"${wsUrl}","protocols":["v1"]}.
 5. description="manual-stop", command="sleep 30", persistent=true, timeout_ms=1000. Once started, call TaskStop on this task immediately.
 6. description="command-stop", command="sleep 30", persistent=true, timeout_ms=1000. Do NOT stop this one, the test client will stop it using a slash command.
-Do not start additional monitors or stop the other five. Reply STARTED after issuing the tools. When events later arrive, acknowledge briefly, never poll or restart anything. Only report received data, never infer unseen events.` });
+7. description="completion", notify="completion", command="printf 'build output\\n'; printf 'build error\\n' >&2; exit 13".
+Do not start additional monitors or stop the other six. Reply STARTED after issuing the tools. When events later arrive, acknowledge briefly, never poll or restart anything. Only report received data, never infer unseen events.` });
   await waitFor(() => toolResults("Monitor").some(event => event.result?.details?.description === "command-stop"));
   const commandTask = toolResults("Monitor").find(event => event.result?.details?.description === "command-stop").result.details;
   const commandStop = await rpc("prompt", { message: `/monitor stop ${commandTask.task_id}` });
   assert.equal(commandStop.disposition, "handled");
-  await waitFor(() => notifications().filter(n => n.kind === "ended").length === 6);
+  await waitFor(() => notifications().filter(n => n.kind === "ended").length === 5);
   // Ensure at least one model response has followed the event notifications.
   await waitFor(() => records.at(-1)?.type === "agent_settled");
   const starts = toolResults("Monitor");
-  assert.equal(starts.length, 6);
+  assert.equal(starts.length, 7);
   assert.ok(starts.every(r => !r.isError), "all Monitor calls must succeed");
-  const events = description => notifications().filter(n => n.kind === "events" && n.description === description).flatMap(n => n.events);
+  const events = description => notifications().filter(n => n.description === description).flatMap(n => n.kind === "events" ? n.events : n.output ?? []);
   assert.deepEqual(events("demo"), ["tick 1", "tick 2", "tick 3", "done"]);
   assert.deepEqual(events("failure"), ["visible"]);
   assert.deepEqual(events("websocket"), ["ws-one", "ws-two"]);
@@ -125,14 +130,19 @@ Do not start additional monitors or stop the other five. Reply STARTED after iss
   assert.equal(ends.get("failure").status, "error");
   assert.match(ends.get("failure").reason, /exit 7/);
   assert.equal(ends.get("timeout").status, "timeout");
-  assert.equal(ends.get("manual-stop").status, "stopped");
-  assert.equal(ends.get("command-stop").status, "stopped");
-  assert.equal(ends.get("command-stop").reason, "stopped by /monitor stop");
+  assert.equal(ends.has("manual-stop"), false, "TaskStop must not send an asynchronous end notification");
+  assert.equal(ends.has("command-stop"), false, "manual slash command must not wake the model");
+  assert.equal(toolResults("TaskStop")[0].result.details.status, "stopped");
   assert.equal(ends.get("websocket").status, "ended");
+  assert.equal(ends.get("completion").exit_code, 13);
+  assert.equal(ends.get("completion").status, "error");
+  assert.match(ends.get("completion").output.join("\n"), /build output/);
+  assert.match(ends.get("completion").stderr, /build error/);
+  assert.equal(notifications().filter(n => n.description === "completion").length, 1);
   assert.equal(toolResults("TaskStop").length, 1);
   assert.ok(!toolResults("TaskStop")[0].isError);
   assert.equal(readFileSync(ends.get("failure").stderr_file, "utf8"), "stderr-only\n");
-  assert.ok(notifications().some(n => n.kind === "events" && n.events.length > 1), "must see a batched notification");
+  assert.ok(notifications().some(n => (n.kind === "events" ? n.events : n.output ?? []).length > 1), "must see a batched notification");
   const assistants = records.filter(e => e.type === "message_end" && e.message?.role === "assistant");
   assert.ok(assistants.every(e => e.message.model === "gpt-6-luna"), "no fallback model");
   assert.ok(!records.some(e => e.type === "extension_error"));

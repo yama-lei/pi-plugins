@@ -24,7 +24,7 @@ function object(value, name, keys) {
 }
 
 export function validateMonitor(input) {
-  object(input, "Monitor", ["description", "timeout_ms", "persistent", "command", "ws"]);
+  object(input, "Monitor", ["description", "timeout_ms", "persistent", "notify", "command", "ws"]);
   if (typeof input.description !== "string" || !input.description.trim() || input.description.length > 200 || /[\x00-\x1f\x7f-\x9f]/u.test(input.description)) {
     throw new Error("description must be a nonempty single-line string, at most 200 characters");
   }
@@ -35,6 +35,8 @@ export function validateMonitor(input) {
   if (typeof timeout_ms !== "number" || !Number.isFinite(timeout_ms) || (!persistent && (!Number.isInteger(timeout_ms) || timeout_ms < 1000 || timeout_ms > 3600000))) {
     throw new Error("timeout_ms must be an integer from 1000 to 3600000 unless persistent is true");
   }
+  const notify = input.notify === undefined ? "events" : input.notify;
+  if (!["events", "completion"].includes(notify)) throw new Error('notify must be "events" or "completion"');
   if ((input.command !== undefined) === (input.ws !== undefined)) throw new Error("Provide exactly one of command or ws");
   if (input.command !== undefined && (typeof input.command !== "string" || !input.command.trim() || input.command.includes("\0"))) {
     throw new Error("command must be a nonempty shell command without NUL");
@@ -54,7 +56,7 @@ export function validateMonitor(input) {
     }
     ws = { url: url.href, ...(protocols === undefined ? {} : { protocols: [...protocols] }) };
   }
-  return { description: input.description.trim(), persistent, timeout_ms, ...(ws ? { ws } : { command: input.command }) };
+  return { description: input.description.trim(), persistent, timeout_ms, notify, ...(ws ? { ws } : { command: input.command }) };
 }
 
 // Never send terminal control sequences from an external stream to a renderer.
@@ -140,7 +142,8 @@ export class MonitorManager {
   snapshot(task) {
     return {
       task_id: task.task_id, description: task.description, persistent: task.persistent,
-      timeout_ms: task.persistent ? null : task.timeout_ms,
+      timeout_ms: task.persistent ? null : task.timeout_ms, notify: task.notify,
+      exit_code: task.exit_code ?? null, signal: task.signal ?? null, close_code: task.close_code ?? null,
       output_file: task.output_file, stderr_file: task.stderr_file,
       events: task.events, status: task.done ? task.status : "running",
       started_at: task.started_at, ended_at: task.ended_at ?? null,
@@ -188,8 +191,12 @@ export class MonitorManager {
     // 'close', not 'exit', guarantees stdout has drained before the terminal notification.
     task.child.on("close", (code, signal) => {
       if (task.done) return;
+      task.exit_code = code;
+      task.signal = signal;
       this.consume(task, task.decoder.end());
-      if (task.line) this.event(task, task.line.replace(/\r$/, ""));
+      if (task.notify === "completion") {
+        if (task.unterminated) task.events++;
+      } else if (task.line) this.event(task, task.line.replace(/\r$/, ""));
       task.line = "";
       this.finish(task, code === 0 ? "ended" : "error", code === 0 ? "stream ended" : `stream ended: exit ${code ?? "null"}${signal ? `, signal ${signal}` : ""}`);
     });
@@ -203,7 +210,11 @@ export class MonitorManager {
       if (this.capture(task, chunk, 0)) this.event(task, message.data);
     });
     task.socket.addEventListener("error", () => this.finish(task, "error", "WebSocket connection error"));
-    task.socket.addEventListener("close", event => this.finish(task, event.code === 1000 || event.code === 1005 ? "ended" : "error", `stream ended: WebSocket close ${event.code}${event.reason ? ` (${safeText(event.reason).slice(0, 200)})` : ""}`));
+    task.socket.addEventListener("close", event => {
+      if (task.done) return;
+      task.close_code = event.code;
+      this.finish(task, event.code === 1000 || event.code === 1005 ? "ended" : "error", `stream ended: WebSocket close ${event.code}${event.reason ? ` (${safeText(event.reason).slice(0, 200)})` : ""}`);
+    });
   }
 
   // A rolling one-second window prevents bursts straddling a fixed window boundary.
@@ -238,6 +249,13 @@ export class MonitorManager {
 
   consume(task, text) {
     if (task.done) return;
+    // Completion jobs retain raw logs, not an unbounded line or event buffer.
+    if (task.notify === "completion") {
+      let last = -1;
+      for (let i = 0; i < text.length; i++) if (text[i] === "\n") { task.events++; last = i; }
+      if (text.length) task.unterminated = last < text.length - 1;
+      return;
+    }
     const lines = (task.line + text).split("\n");
     task.line = lines.pop();
     for (const line of lines) {
@@ -249,6 +267,7 @@ export class MonitorManager {
 
   event(task, text) {
     if (task.done) return;
+    if (task.notify === "completion") { task.events++; return; }
     const bytes = Buffer.byteLength(text);
     if (bytes > this.limits.maxEventBytes || task.pendingBytes + bytes > this.limits.maxBatchBytes || task.events >= this.limits.maxEvents) {
       this.finish(task, "limit", "automatically stopped: event, batch, or total event limit exceeded");
@@ -257,6 +276,7 @@ export class MonitorManager {
     if (!this.allowance(task, 0, 1)) return;
     task.events++;
     task.pendingBytes += bytes;
+    if (!task.pending.length) task.pendingSince = Date.now();
     task.pending.push(safeText(text));
     if (!task.batch) task.batch = setTimeout(() => this.flush(task), this.limits.batchMs);
   }
@@ -266,9 +286,11 @@ export class MonitorManager {
     task.batch = undefined;
     if (!task.pending.length) return;
     const events = task.pending;
+    const first_occurred_at = task.pendingSince;
     task.pending = [];
     task.pendingBytes = 0;
-    this.notify({ ...this.snapshot(task), kind: "events", events, count: task.events });
+    task.pendingSince = undefined;
+    this.notify({ ...this.snapshot(task), kind: "events", events, count: task.events, first_occurred_at, occurred_at: Date.now() });
   }
 
   finish(task, status, reason, notify = true) {
@@ -291,17 +313,29 @@ export class MonitorManager {
       while (this.history.size > this.limits.maxHistory) this.history.delete(this.history.keys().next().value);
     }
     if (notify && !this.closed) {
-      this.flush(task);
-      this.notify({ ...this.snapshot(task), kind: "ended", reason: safeText(reason) });
-    } else {
-      task.pending = [];
+      const output = task.pending;
+      const event = { ...this.snapshot(task), kind: "ended", output, first_occurred_at: task.notify === "completion" ? task.started_at : task.pendingSince ?? task.ended_at, occurred_at: task.ended_at };
+      if (task.notify === "completion") {
+        const stdout = readOutputPreview(task.output_file, 8 * 1024);
+        event.output = stdout.text ? [stdout.text] : [];
+        event.output_truncated = stdout.truncated;
+      }
+      // Errors need diagnostics even when stderr was not redirected to stdout.
+      if (task.notify === "completion" || status !== "ended") {
+        const stderr = readOutputPreview(task.stderr_file, 8 * 1024);
+        event.stderr = stderr.text;
+        event.stderr_truncated = stderr.truncated;
+      }
+      this.notify(event);
     }
+    task.pending = [];
+    task.pendingBytes = 0;
   }
 
   stop(task_id, reason = "stopped by TaskStop") {
     const task = this.tasks.get(task_id);
     if (!task) throw new Error(`Monitor task ${task_id} is not running in this session`);
-    this.finish(task, "stopped", reason);
+    this.finish(task, "stopped", reason, false);
     return this.snapshot(task);
   }
 

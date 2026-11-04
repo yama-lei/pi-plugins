@@ -21,7 +21,7 @@ function fixture(t, options = {}) {
   const messages = [];
   const manager = new MonitorManager({ notify: m => messages.push(m), outputRoot: root, ...options });
   t.after(() => { manager.shutdown(); rmSync(root, { recursive: true, force: true }); });
-  return { manager, root, messages, events: () => messages.filter(m => m.kind === "events").flatMap(m => m.events), ended: () => messages.find(m => m.kind === "ended") };
+  return { manager, root, messages, events: () => messages.flatMap(m => m.kind === "events" ? m.events : m.output ?? []), ended: () => messages.find(m => m.kind === "ended") };
 }
 
 class FakeSocket extends EventTarget {
@@ -40,12 +40,14 @@ test("validation and defaults happen before file, process, or socket side effect
   const valid = { description: "errors", command: "printf ok" };
   assert.equal(validateMonitor(valid).timeout_ms, 300000);
   assert.equal(validateMonitor(valid).persistent, false);
+  assert.equal(validateMonitor(valid).notify, "events");
   assert.equal(validateMonitor({ ...valid, persistent: true, timeout_ms: -1 }).timeout_ms, -1);
   for (const input of [
     {}, { ...valid, description: "" }, { ...valid, description: "bad\nlabel" }, { ...valid, description: "a".repeat(201) },
     { ...valid, command: "" }, { ...valid, command: "x\0y" }, { ...valid, timeout_ms: 999 }, { ...valid, timeout_ms: 3600001 },
     { ...valid, timeout_ms: 1000.5 }, { ...valid, timeout_ms: NaN }, { ...valid, persistent: "true" },
     { ...valid, timeout_ms: null }, { ...valid, persistent: null }, { ...valid, extra: 1 },
+    ...[null, true, "other", 1].map(notify => ({ ...valid, notify })),
     { ...valid, ws: { url: "wss://example.com" } }, { description: "no source" },
     ...["https://example.com", "ws://user:pass@example.com", "ws://example.com/#x", "oops"].map(url => ({ description: "x", ws: { url } })),
     { description: "x", ws: { url: "wss://example.com", protocols: ["v1", "v1"] } },
@@ -81,7 +83,9 @@ test("2>&1 merges stderr, CRLF and EOF fragments become events, command failures
   await until(f.ended);
   assert.deepEqual(f.events(), ["line", "Error", "partial"]);
   assert.equal(f.ended().status, "error");
+  assert.equal(f.ended().exit_code, 7);
   assert.match(f.ended().reason, /exit 7/);
+  assert.equal(f.messages.length, 1, "EOF output and exit must share one notification");
   await sleep(250);
   assert.equal(f.messages.filter(m => m.kind === "ended").length, 1);
 });
@@ -123,7 +127,7 @@ test("timeout kills the process group, including pipeline children", async t => 
   }
 });
 
-test("persistent ignores timeout; TaskStop flushes pending events and stops exactly once", async t => {
+test("persistent ignores timeout; TaskStop discards pending events and stops silently once", async t => {
   const f = fixture(t, { WebSocket: FakeSocket });
   const task = f.manager.start({ description: "persistent", ws: { url: "ws://example.com" }, persistent: true, timeout_ms: 1 });
   const socket = FakeSocket.instances.at(-1);
@@ -133,9 +137,10 @@ test("persistent ignores timeout; TaskStop flushes pending events and stops exac
   assert.equal(f.manager.tasks.get(task.task_id).timeout, undefined);
   assert.equal(f.manager.stop(task.task_id).status, "stopped");
   assert.equal(socket.closed, true);
-  assert.deepEqual(f.events(), ["one"]);
+  assert.deepEqual(f.events(), []);
   socket.sendText("late"); socket.end();
-  assert.equal(f.messages.filter(m => m.kind === "ended").length, 1);
+  await sleep(250);
+  assert.equal(f.messages.length, 0);
   assert.throws(() => f.manager.stop(task.task_id), /not running/);
 });
 
@@ -269,6 +274,44 @@ test("output previews are bounded UTF-8 tails, sanitized, and tolerate missing l
   assert.ok(preview.text.endsWith("TAIL\n"));
   rmSync(task.output_file);
   assert.match(f.manager.inspect(task.task_id).stdout.error, /ENOENT/);
+});
+
+test("completion mode accepts noisy and long output, emits once, and reports the actual exit code and stderr", async t => {
+  const f = fixture(t, { limits: { maxEventBytes: 4, maxBatchBytes: 4, maxEventsPerSecond: 1, maxEvents: 1 } });
+  const code = "for(let i=0;i<1500;i++)console.log('progress '+i);process.stdout.write('中'.repeat(6000)+'last');console.error('build failed');process.exitCode=101";
+  const task = f.manager.start({ description: "build", command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(code)}`, notify: "completion" });
+  await until(f.ended);
+  assert.equal(f.messages.length, 1);
+  const end = f.ended();
+  assert.equal(end.exit_code, 101);
+  assert.equal(end.status, "error");
+  assert.equal(end.events, 1501);
+  assert.equal(end.output_truncated, true);
+  assert.ok(end.output[0].endsWith("last"));
+  assert.ok(Buffer.byteLength(end.output[0]) <= 8192);
+  assert.ok(!end.output[0].includes("�"));
+  assert.equal(end.stderr, "build failed\n");
+  assert.equal(readFileSync(task.output_file, "utf8").split("\n").length, 1501);
+  assert.equal(f.manager.get(task.task_id).exit_code, 101);
+});
+
+test("completion mode still enforces byte limits and WebSocket closes only once", async t => {
+  const f = fixture(t, { WebSocket: FakeSocket, limits: { maxOutputBytes: 16 } });
+  const task = f.manager.start({ description: "bytes", ws: { url: "ws://example.com" }, notify: "completion" });
+  FakeSocket.instances.at(-1).sendText("x".repeat(32));
+  assert.equal(f.ended().status, "limit");
+  assert.equal(f.messages.length, 1);
+  assert.equal(statSync(task.output_file).size, 16);
+  const g = fixture(t, { WebSocket: FakeSocket });
+  g.manager.start({ description: "ws completion", ws: { url: "ws://example.com" }, notify: "completion" });
+  const socket = FakeSocket.instances.at(-1);
+  socket.sendText("first"); socket.sendText("second");
+  await sleep(250);
+  assert.equal(g.messages.length, 0);
+  socket.end(1006, "lost");
+  assert.equal(g.messages.length, 1);
+  assert.equal(g.ended().close_code, 1006);
+  assert.deepEqual(g.ended().output, ["first\nsecond\n"]);
 });
 
 test("real Node WebSocket connects to a loopback server and delivers text before close", async t => {

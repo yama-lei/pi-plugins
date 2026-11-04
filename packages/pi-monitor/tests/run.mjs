@@ -18,8 +18,10 @@ const jiti = createJiti(import.meta.url, {
   alias: {
     "@earendil-works/pi-coding-agent": join(host, "dist/index.js"),
     "@earendil-works/pi-tui": join(host, "node_modules/@earendil-works/pi-tui/dist/index.js"),
+    "@earendil-works/pi-ai": join(host, "node_modules/@earendil-works/pi-ai/dist/index.js"),
     typebox: join(host, "node_modules/typebox/build/index.mjs"),
   },
 });
 await jiti.import("./extension.test.ts");
 await jiti.import("./browser.test.ts");
+await jiti.import("./lifecycle.test.ts");
